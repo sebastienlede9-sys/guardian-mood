@@ -1,4 +1,4 @@
-import os, csv, time, requests, random, datetime, pathlib, sys, json
+import os, csv, requests, random, datetime, pathlib
 
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
@@ -11,10 +11,12 @@ LOG_FILE = ROOT / "data" / "mood_log.csv"
 
 def load_last_update_id():
     if STATE_FILE.exists():
-        return int(STATE_FILE.read_text().strip() or "0")
+        txt = STATE_FILE.read_text().strip()
+        return int(txt) if txt else 0
     return 0
 
 def save_last_update_id(uid: int):
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(str(uid))
 
 def send_message(text):
@@ -28,30 +30,33 @@ def get_updates(offset):
     params = {"offset": offset, "timeout": 0}
     r = requests.get(url, params=params, timeout=30)
     r.raise_for_status()
-    return r.json()["result"]
+    return r.json().get("result", [])
 
 def ensure_log_header():
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not LOG_FILE.exists():
-        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with LOG_FILE.open("w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["date","slot","answer","telegram_message_ts","action_suggested"])
+            csv.writer(f)..writerow(
+                ["date","slot","answer","telegram_message_ts","action_suggested"]
+            )
 
 def parse_answer(text: str):
     """
-    Attend des formats comme:
-    '9 oui' / '9 non'
-    '15 oui' / '15 non'
-    '21 oui' / '21 non'
-    Renvoie (slot_str, answer_bool) ou (None, None) si non conforme.
+    Formats acceptés :
+      '9 oui' / '9 non'
+      '15 oui' / '15 non'
+      '21 oui' / '21 non'
+      variantes avec 'h' ou ':' sont tolérées (ex: '9h oui', '21:00 oui')
     """
-    t = text.strip().lower().replace("h", "").replace(":", " ").split()
-    if len(t) < 2:
+    t = text.strip().lower()
+    t = t.replace(":", " ").replace("h", " ")
+    parts = [p for p in t.split() if p]
+    if len(parts) < 2:
         return None, None
-    slot_token, ans = t[0], t[1]
-    if slot_token not in {"9","15","21"}:
+    slot_token, ans = parts[0], parts[1]
+    if slot_token not in {"9","09","15","21"}:
         return None, None
-    slot = {"9":"09:00","15":"15:00","21":"21:00"}[slot_token]
+    slot = {"9":"09:00","09":"09:00","15":"15:00","21":"21:00"}[slot_token]
     if ans not in {"oui","non"}:
         return None, None
     return slot, (ans == "oui")
@@ -59,16 +64,17 @@ def parse_answer(text: str):
 def log_row(date_str, slot, answer_bool, msg_ts, action):
     ensure_log_header()
     with LOG_FILE.open("a", newline="") as f:
-        w = csv.writer(f)
-        w.writerow([date_str, slot, "1" if answer_bool else "0", msg_ts, action or ""])
+        csv.writer(f)..writerow([date_str, slot, "1" if answer_bool else "0", msg_ts, action or ""])
 
 def main():
     last_id = load_last_update_id()
     updates = get_updates(last_id + 1)
     max_id = last_id
+
     for u in updates:
-        upd_id = u["update_id"]
-        max_id = max(max_id, upd_id)
+        upd_id = u.get("update_id", 0)
+        if upd_id > max_id:
+            max_id = upd_id
 
         msg = u.get("message") or u.get("edited_message")
         if not msg:
@@ -85,7 +91,7 @@ def main():
 
         slot, ok = parse_answer(text)
         if slot is None:
-            continue  # ignore autres messages
+            continue
 
         dt_msg = datetime.datetime.fromtimestamp(msg["date"])
         date_str = dt_msg.strftime("%Y-%m-%d")
@@ -96,8 +102,7 @@ def main():
             action = random.choice(ACTIONS)
             try:
                 send_message(f"Noté pour {slot}. Essaie : {action}")
-            except Exception as e:
-                # On continue même si l'envoi d'action échoue
+            except Exception:
                 pass
 
         log_row(date_str, slot, ok, ts_str, action)
