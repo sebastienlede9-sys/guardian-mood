@@ -64,7 +64,7 @@ def parse_answer(text: str):
 def log_row(date_str, slot, answer_bool, msg_ts, action):
     ensure_log_header()
     with LOG_FILE.open("a", newline="") as f:
-        csv.writer(f)..writerow([date_str, slot, "1" if answer_bool else "0", msg_ts, action or ""])
+        csv.writer(f).writerow([date_str, slot, "1" if answer_bool else "0", msg_ts, action or ""])
 
 def main():
     last_id = load_last_update_id()
