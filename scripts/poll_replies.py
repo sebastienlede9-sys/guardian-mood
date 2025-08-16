@@ -6,8 +6,9 @@ CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 ACTIONS = ["Balade Katajanokka", "Sauna", "Baignade", "Pompes/Gainage"]
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-STATE_FILE = ROOT / "state" / "last_update_id.txt"
-LOG_FILE = ROOT / "data" / "mood_log.csv"
+# Permet d'utiliser des fichiers de test via variables d'env si besoin
+LOG_FILE = pathlib.Path(os.environ.get("LOG_FILE", str(ROOT / "data" / "mood_log.csv")))
+STATE_FILE = pathlib.Path(os.environ.get("STATE_FILE", str(ROOT / "state" / "last_update_id.txt")))
 
 def load_last_update_id():
     if STATE_FILE.exists():
@@ -36,20 +37,14 @@ def ensure_log_header():
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not LOG_FILE.exists():
         with LOG_FILE.open("w", newline="") as f:
-            csv.writer(f).writerow(
-                ["date","slot","answer","telegram_message_ts","action_suggested"]
-            )
+            w = csv.writer(f)
+            w.writerow(["date","slot","answer","telegram_message_ts","action_suggested"])
 
 def parse_answer(text: str):
     """
-    Formats acceptés :
-      '9 oui' / '9 non'
-      '15 oui' / '15 non'
-      '21 oui' / '21 non'
-      variantes avec 'h' ou ':' sont tolérées (ex: '9h oui', '21:00 oui')
+    Accepte: "9 oui", "9 non", "9h oui", "21:00 non", etc.
     """
-    t = text.strip().lower()
-    t = t.replace(":", " ").replace("h", " ")
+    t = text.strip().lower().replace(":", " ").replace("h", " ")
     parts = [p for p in t.split() if p]
     if len(parts) < 2:
         return None, None
@@ -64,7 +59,8 @@ def parse_answer(text: str):
 def log_row(date_str, slot, answer_bool, msg_ts, action):
     ensure_log_header()
     with LOG_FILE.open("a", newline="") as f:
-        csv.writer(f).writerow([date_str, slot, "1" if answer_bool else "0", msg_ts, action or ""])
+        w = csv.writer(f)
+        w.writerow([date_str, slot, "1" if answer_bool else "0", msg_ts, action or ""])
 
 def main():
     last_id = load_last_update_id()
@@ -89,7 +85,7 @@ def main():
         if not text:
             continue
 
-        slot, ok = parse_answer(text)
+        slot, is_yes = parse_answer(text)
         if slot is None:
             continue
 
@@ -98,14 +94,31 @@ def main():
         ts_str = dt_msg.isoformat()
 
         action = None
-        if ok:
-            action = random.choice(ACTIONS)
+        # ✅ NOUVELLE LOGIQUE : proposer les 4 solutions quand la réponse est "non"
+        if not is_yes:
+            all_actions_text = (
+                "Tu as répondu *non*. Voici 4 solutions possibles :\n"
+                "- Balade à Katajanokka\n"
+                "- Sauna\n"
+                "- Baignade\n"
+                "- Pompes / Gainage"
+            )
             try:
-                send_message(f"Noté pour {slot}. Essaie : {action}")
+                # Telegram ne rend pas le gras sans parse_mode; on garde du texte simple.
+                send_message(all_actions_text)
             except Exception:
                 pass
+            # On enregistre toutes les actions dans la colonne action_suggested
+            action = " | ".join(ACTIONS)
 
-        log_row(date_str, slot, ok, ts_str, action)
+        # Si "oui", on ne propose rien (on log juste). Tu peux décommenter la ligne suivante si tu veux un accusé :
+        # else:
+        #     try:
+        #         send_message(f"Noté pour {slot}. Continue sur ta lancée.")
+        #     except Exception:
+        #         pass
+
+        log_row(date_str, slot, is_yes, ts_str, action)
 
     if max_id != last_id:
         save_last_update_id(max_id)
