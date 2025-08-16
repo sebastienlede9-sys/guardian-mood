@@ -1,4 +1,4 @@
-name: Send Telegram Reminder (test)
+name: Send Reminder (root)
 
 on:
   workflow_dispatch:
@@ -7,23 +7,23 @@ jobs:
   send:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: List files
+      - name: List files (debug)
         run: |
           pwd
           ls -la
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Install deps
         run: pip install -r requirements.txt
 
-      - name: Call Telegram API
-        run: |
-          curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage \
-          -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
-          -d text="Hello 👋 Ceci est un test de ton bot Telegram via GitHub Actions"
+      - name: Run script
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SLOT: "09:00"
+        run: python scripts/send_reminder.py
