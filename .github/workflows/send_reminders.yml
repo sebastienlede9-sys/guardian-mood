@@ -26,4 +26,4 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SLOT: "09:00"
-        run: python .github/workflows/scripts/send_reminder.py
+        run: python scripts/send_reminder.py
