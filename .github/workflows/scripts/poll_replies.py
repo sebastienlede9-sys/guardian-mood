@@ -36,7 +36,7 @@ def ensure_log_header():
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not LOG_FILE.exists():
         with LOG_FILE.open("w", newline="") as f:
-            csv.writer(f)..writerow(
+            csv.writer(f).writerow(
                 ["date","slot","answer","telegram_message_ts","action_suggested"]
             )
 
