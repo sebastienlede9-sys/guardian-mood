@@ -15,7 +15,7 @@ def send_message(text):
 def main():
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     msg = (
-        f"[{today} {SLOT}] Es-tu dans un bon état émotionnel ?\n"
+        f"[{today} {SLOT}] Es-tu dans un bon état émotionnel ? Prends ton temps pour répondre \n"
         f"Réponds ici avec le format: 9 oui / 9 non (ou 15 oui/non, 21 oui/non)."
     )
     send_message(msg)
