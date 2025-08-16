@@ -29,7 +29,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python guardian/.github/workflows/scripts/poll_replies.py
+        run: python guardian/poll_replies.py
 
       - name: Commit changes (CSV + state)
         run: |
