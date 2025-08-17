@@ -2,9 +2,8 @@ name: Poll Telegram Replies
 
 on:
   schedule:
-    - cron: "53 5,11,17 * * *"   # 09:01 / 15:01 / 21:01 Helsinki
-    - cron: "58 5,11,17 * * *"   # 09:05 / 15:05 / 21:05 Helsinki
-
+    - cron: "55 5,11,17 * * *"   # 09:01 / 15:01 / 21:01 (Helsinki été)
+    - cron: "58 5,11,17 * * *"   # 09:05 / 15:05 / 21:05 (Helsinki été)
   workflow_dispatch:
 
 permissions:
@@ -14,21 +13,29 @@ concurrency:
   group: mood-guardian
   cancel-in-progress: false
 
-
 jobs:
   poll:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
         with:
           persist-credentials: true
+
+      - name: List files (debug)
+        run: |
+          pwd
+          ls -la
+          echo "--- scripts ---"; ls -la scripts || true
+          echo "--- data ---";    ls -la data || true
+          echo "--- state ---";   ls -la state || true
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install deps (si requirements.txt existe)
+      - name: Install deps
         if: ${{ hashFiles('requirements.txt') != '' }}
         run: pip install -r requirements.txt
 
@@ -38,12 +45,19 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python scripts/poll_replies.py
 
-      - name: Commit changes (CSV + state)
+      - name: Ask next question (no Telegram read)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/ask_questions.py
+
+      - name: Commit changes
         run: |
-          if [[ -n "$(git status --porcelain data/mood_log.csv state/last_update_id.txt 2>/dev/null)" ]]; then
-            git config user.name "github-actions[bot]"
+          if [[ -n "$(git status --porcelain data/ state/ 2>/dev/null)" ]]; then
+            git config user.name  "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add data/mood_log.csv state/last_update_id.txt
-            git commit -m "Update mood log ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+            git add data/mood_log.csv data/mood_details.csv data/mood_followups.csv \
+                    state/last_update_id.txt state/convo_state.json state/followups.json
+            git commit -m "Update logs ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
             git push
           fi
