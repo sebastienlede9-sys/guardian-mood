@@ -2,8 +2,8 @@ name: Poll Telegram Replies
 
 on:
   schedule:
-    - cron: "1 6,12,18 * * *"   # 09:01 / 15:01 / 21:01 Helsinki
-    - cron: "5 6,12,18 * * *"   # 09:05 / 15:05 / 21:05 Helsinki
+    - cron: "53 5,11,17 * * *"   # 09:01 / 15:01 / 21:01 Helsinki
+    - cron: "58 5,11,17 * * *"   # 09:05 / 15:05 / 21:05 Helsinki
 
 
 
