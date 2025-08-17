@@ -5,6 +5,14 @@ on:
       - cron: "53 6,12,18 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+concurrency:
+  group: mood-guardian
+  cancel-in-progress: false
+
+
 jobs:
   followups:
     runs-on: ubuntu-latest
