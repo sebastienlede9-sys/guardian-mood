@@ -2,7 +2,7 @@ name: Send Reminder (root)
 
 on:
   schedule:
-    - cron: "0 6,12,18 * * *"   # 09:00 / 15:00 / 21:00 Helsinki
+    - cron: "46 7,12,18 * * *"   # 09:00 / 15:00 / 21:00 Helsinki
    
     
   workflow_dispatch:
