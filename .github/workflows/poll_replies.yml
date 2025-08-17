@@ -5,12 +5,15 @@ on:
     - cron: "53 5,11,17 * * *"   # 09:01 / 15:01 / 21:01 Helsinki
     - cron: "58 5,11,17 * * *"   # 09:05 / 15:05 / 21:05 Helsinki
 
-
-
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: mood-guardian
+  cancel-in-progress: false
+
 
 jobs:
   poll:
