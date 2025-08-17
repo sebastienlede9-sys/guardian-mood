@@ -1,17 +1,9 @@
 {
   "7322542007": {
     "active": true,
+    "awaiting_details": true,
     "slot": "09:00",
     "date": "2025-08-17",
-    "origin_ts": "2025-08-17T12:14:04+03:00",
-    "step": 1,
-    "last_question_sent_step": 1,
-    "answers": {
-      "duration_h": "2 heures",
-      "reason": "",
-      "thoughts": "",
-      "desire": "",
-      "choice": ""
-    }
+    "origin_ts": "2025-08-17T12:22:08+03:00"
   }
 }
