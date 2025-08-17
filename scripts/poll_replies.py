@@ -1,4 +1,5 @@
 import os
+import re
 import csv
 import json
 import requests
@@ -10,7 +11,7 @@ from zoneinfo import ZoneInfo
 # Config & chemins
 # =========================
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]  # str attendu (on cast plus bas au besoin)
+CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]  # string recommandé
 TZ = ZoneInfo("Europe/Helsinki")
 
 ACTIONS = ["Balade Katajanokka", "Sauna", "Baignade", "Pompes/Gainage"]
@@ -51,14 +52,32 @@ def ensure_all_headers():
     ensure_csv_header(FOLLOWUPS_LOG, ["date","slot","origin_ts","followup_sent_ts","followup_response_ts","response","response_text"])
 
 # =========================
-# Telegram helpers (écriture minime)
+# Telegram
 # =========================
 def send_message(text: str):
-    """Utilisé uniquement pour des petits accusés (ex: merci pour le suivi)."""
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text}
     r = requests.post(url, json=payload, timeout=20)
     r.raise_for_status()
+
+def send_all_questions(slot: str):
+    tpl = (
+        "Tu as répondu NON pour {slot}.\n\n"
+        "Merci de répondre en **un seul message** en suivant ce modèle :\n"
+        "Durée: <depuis combien d’heures>\n"
+        "Raison: <pour quelle raison>\n"
+        "Pensées: <quelles pensées>\n"
+        "Envie: <qu’as-tu envie de faire>\n"
+        "Choix: <Balade Katajanokka / Sauna / Baignade / Pompes/Gainage>\n\n"
+        "Exemple :\n"
+        "Durée: 3h\n"
+        "Raison: manque de sommeil\n"
+        "Pensées: ruminations boulot\n"
+        "Envie: sieste courte\n"
+        "Choix: Sauna"
+    )
+    # Telegram ne rend pas le gras sans parse_mode; on garde du texte simple
+    send_message(tpl.format(slot=slot))
 
 # =========================
 # Offset (anti-doublon)
@@ -93,6 +112,37 @@ def parse_slot_answer(text: str):
         return None, None
     return slot, (ans == "oui")
 
+DETAIL_KEYS = {
+    "duration_h": r"(?im)^\s*(dur[ée]e?)\s*[:=]\s*(.+)$",
+    "reason":     r"(?im)^\s*(raison|cause)\s*[:=]\s*(.+)$",
+    "thoughts":   r"(?im)^\s*(pens[ée]es?)\s*[:=]\s*(.+)$",
+    "desire":     r"(?im)^\s*(envies?|envie)\s*[:=]\s*(.+)$",
+    "choice":     r"(?im)^\s*(choix|solution)\s*[:=]\s*(.+)$",
+}
+
+def parse_details_block(text: str):
+    """
+    Parse un message multi-lignes contenant:
+      Durée: ...
+      Raison: ...
+      Pensées: ...
+      Envie: ...
+      Choix: ...
+    Renvoie un dict avec champs (vides si manquants).
+    """
+    res = {"duration_h":"", "reason":"", "thoughts":"", "desire":"", "choice":""}
+    for key, pat in DETAIL_KEYS.items():
+        m = re.search(pat, text)
+        if m:
+            res[key] = m.group(2).strip()
+    # normalise le choix si possible
+    choice_norm = res["choice"].lower()
+    for a in ACTIONS:
+        if a.lower() in choice_norm:
+            res["choice"] = a
+            break
+    return res
+
 def log_main(date_str, slot, is_yes, ts_str, action):
     ensure_csv_header(LOG_FILE, ["date","slot","answer","telegram_message_ts","action_suggested"])
     with LOG_FILE.open("a", newline="", encoding="utf-8") as f:
@@ -115,17 +165,9 @@ def log_followup(date_str, slot, origin_ts, sent_ts, resp_ts, resp_bool, resp_te
 # =========================
 # État conversation & suivis
 # =========================
-QUESTIONS = [
-    "Depuis combien d’heures ça dure ?",
-    "Pour quelle raison ?",
-    "Quelles sont les pensées qui te traversent l’esprit ?",
-    "Qu’est-ce que tu as envie de faire ?",
-    "Quelle solution tu choisis ? (Balade Katajanokka / Sauna / Baignade / Pompes/Gainage)",
-]
-
 def convo_get():
     state = read_json(CONVO_FILE, {})
-    return state.get(str(CHAT_ID)) or state.get(CHAT_ID)  # compat str/int
+    return state.get(str(CHAT_ID)) or state.get(CHAT_ID)
 
 def convo_set(obj):
     state = read_json(CONVO_FILE, {})
@@ -147,54 +189,34 @@ def followups_add(entry):
     data["pending"].append(entry)
     followups_write(data)
 
-def handle_convo_step(incoming_text: str, msg_dt_local: datetime.datetime) -> bool:
+# =========================
+# Détails (one-shot) & suivi
+# =========================
+def handle_details_if_expected(incoming_text: str, now_local: datetime.datetime) -> bool:
     """
-    Si une conversation est active :
-      - enregistre la réponse pour la question courante,
-      - incrémente `step`,
-      - si terminé (step == len(QUESTIONS)), log details et planifie un follow-up,
-      - ne pas envoyer la question suivante (c'est le rôle de ask_questions.py).
-    Retourne True si le message a été consommé par la conversation.
+    Si une conversation 'awaiting_details' est active, parse le bloc de réponses,
+    logge mood_details.csv, et n'envoie rien (tout a été demandé en un seul message).
+    Le suivi +1h est déjà programmé au moment du 'non'.
     """
     convo = convo_get()
-    if not convo or not convo.get("active"):
+    if not convo or not convo.get("active") or not convo.get("awaiting_details"):
         return False
 
-    step = convo.get("step", 0)
-    key_order = ["duration_h","reason","thoughts","desire","choice"]
-    if step < len(key_order):
-        key = key_order[step]
-        convo["answers"][key] = incoming_text.strip()
-        convo["step"] = step + 1
+    # Associer au NON d'origine
+    date_str = convo["date"]
+    slot = convo["slot"]
+    origin_ts = convo["origin_ts"]
 
-    if convo["step"] < len(QUESTIONS):
-        # Sauvegarder l'avancement, ask_questions.py enverra la prochaine question
-        convo_set(convo)
-    else:
-        # Questionnaire terminé -> log details + planifier suivi + close convo
-        date_str = convo["date"]
-        slot = convo["slot"]
-        origin_ts = convo["origin_ts"]
-        ans = convo["answers"]
-        log_details(date_str, slot, origin_ts, ans["duration_h"], ans["reason"], ans["thoughts"], ans["desire"], ans["choice"])
+    parsed = parse_details_block(incoming_text)
+    log_details(date_str, slot, origin_ts, parsed["duration_h"], parsed["reason"],
+                parsed["thoughts"], parsed["desire"], parsed["choice"])
 
-        # planifier follow-up à +1h (UTC en stockage)
-        due_dt_local = msg_dt_local + datetime.timedelta(hours=1)
-        due_utc = due_dt_local.astimezone(datetime.timezone.utc).isoformat()
-        entry = {
-            "chat_id": str(CHAT_ID),
-            "date": date_str,
-            "slot": slot,
-            "origin_ts": origin_ts,
-            "due_ts_utc": due_utc,
-            "sent": False,
-            "awaiting_response": False,
-            "followup_sent_ts": None
-        }
-        followups_add(entry)
-        # clôture
-        convo_set(None)
-
+    # clôturer la conversation
+    convo_set(None)
+    try:
+        send_message("Merci, j’ai bien noté tes détails 🙏")
+    except Exception:
+        pass
     return True
 
 def try_capture_followup_response(incoming_text: str, msg_dt_local: datetime.datetime) -> bool:
@@ -217,7 +239,6 @@ def try_capture_followup_response(incoming_text: str, msg_dt_local: datetime.dat
             log_followup(item["date"], item["slot"], item["origin_ts"], sent_ts, resp_ts, resp_bool, t)
             item["awaiting_response"] = False
             updated = True
-            # petit accusé
             try:
                 send_message("Merci pour ton retour.")
             except Exception:
@@ -261,21 +282,20 @@ def main():
         if not text:
             continue
 
-        # horodatage local (Helsinki) du message
+        # horodatage local (Helsinki)
         dt_local = datetime.datetime.fromtimestamp(msg["date"], tz=datetime.timezone.utc).astimezone(TZ)
         date_str = dt_local.strftime("%Y-%m-%d")
         ts_str = dt_local.isoformat()
 
-        # 0) priorité : réponse à un SUVI 'oui/non' ?
+        # 0) priorité : réponse à un SUIVI 'oui'/'non' ?
         if try_capture_followup_response(text, dt_local):
             continue
 
-        # 1) une conversation (questionnaire) est-elle en cours ?
-        #    si oui, consommer la réponse et avancer le step (sans envoyer la prochaine question ici)
-        if handle_convo_step(text, dt_local):
+        # 1) si on attend un bloc détails (après un NON), le traiter
+        if handle_details_if_expected(text, dt_local):
             continue
 
-        # 2) sinon, est-ce une réponse de slot '9/15/21 oui|non' ?
+        # 2) sinon, réponse de slot '9/15/21 oui|non' ?
         slot, is_yes = parse_slot_answer(text)
         if slot is None:
             # message libre ignoré
@@ -284,20 +304,37 @@ def main():
         # Log principal
         action = None
         if not is_yes:
-            # On ne propose rien ici (c'est ask_questions.py qui enverra),
-            # mais on note les actions proposées dans le CSV principal.
+            # Proposer les 4 actions (en CSV) et DEMANDER toutes les questions en un seul message
             action = " | ".join(ACTIONS)
-            # Créer l'état de conversation (step=0, rien encore envoyé)
+            # État attente d'un bloc unique de détails
             convo = {
                 "active": True,
+                "awaiting_details": True,
                 "slot": slot,
                 "date": date_str,
                 "origin_ts": ts_str,
-                "step": 0,
-                "last_question_sent_step": -1,
-                "answers": {"duration_h":"", "reason":"", "thoughts":"", "desire":"", "choice":""}
             }
             convo_set(convo)
+
+            # Programmer le suivi à +1h IMMÉDIATEMENT
+            due_dt_local = dt_local + datetime.timedelta(hours=1)
+            entry = {
+                "chat_id": str(CHAT_ID),
+                "date": date_str,
+                "slot": slot,
+                "origin_ts": ts_str,
+                "due_ts_utc": due_dt_local.astimezone(datetime.timezone.utc).isoformat(),
+                "sent": False,
+                "awaiting_response": False,
+                "followup_sent_ts": None
+            }
+            followups_add(entry)
+
+            # Envoyer le message combiné contenant toutes les questions
+            try:
+                send_all_questions(slot)
+            except Exception:
+                pass
 
         log_main(date_str, slot, is_yes, ts_str, action)
 
