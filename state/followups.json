@@ -29,6 +29,16 @@
       "sent": false,
       "awaiting_response": false,
       "followup_sent_ts": null
+    },
+    {
+      "chat_id": "7322542007",
+      "date": "2025-08-21",
+      "slot": "09:00",
+      "origin_ts": "2025-08-21T09:01:56+03:00",
+      "due_ts_utc": "2025-08-21T07:01:56+00:00",
+      "sent": false,
+      "awaiting_response": false,
+      "followup_sent_ts": null
     }
   ],
   "sent": []
